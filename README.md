@@ -36,6 +36,10 @@ void onMain() {
 }
 ```
 
+## Project
+[raylib-camera-example](https://github.com/EDBCREPO/raylib-camera-example/edit/main/README.md)
+[Videograbación 2025-02-17 17:59:41.webm](https://github.com/user-attachments/assets/de205b84-2156-4bef-aa79-989991fc62e9)
+
 ## Compilation
 ```bash
 g++ -o main main.cpp -I./include -luvc -lpthread -lusb-1.0
