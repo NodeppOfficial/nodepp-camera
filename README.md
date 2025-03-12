@@ -37,7 +37,7 @@ void onMain() {
 ```
 
 ## Project
-[raylib-camera-example](https://github.com/EDBCREPO/raylib-camera-example/edit/main/README.md)
+[raylib-camera-example](https://github.com/EDBCREPO/raylib-camera-example)
 
 ## Compilation
 ```bash
