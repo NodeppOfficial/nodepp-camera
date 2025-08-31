@@ -51,7 +51,7 @@ protected:
         string_t              err ;
         frame_t               frm ;
         ulong               stamp = 0;
-        int                 state = 0;
+        char                state = 0;
     };  ptr_t<NODE> obj;
 
     static void frame_callback( uvc_frame_t *frame, void *user_data ) {

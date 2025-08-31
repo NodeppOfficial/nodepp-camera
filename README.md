@@ -24,15 +24,20 @@ void onMain() {
     process::add([=](){
     coStart
     
-        while( devices[0].is_available() ){
-            console::log( devices[0].get_frame()->data );
-        coDelay( 100 ); } devices[0].close();
+        while( devices[0].is_available() ){ do {
+               auto frame = devices[0].get_frame();
+               if ( frame== nullptr ) { break; }
+               coonsole::log( frame->data ); 
+        } while(0); coNext; } devices[0].close();
     
     coStop
     });
 
 }
 ```
+
+## Project
+[raylib-camera-example](https://github.com/EDBCREPO/raylib-camera-example)
 
 ## Compilation
 ```bash
