@@ -11,9 +11,13 @@
 
 #ifndef NODEPP_CAMERA_CAMERA
 #define NODEPP_CAMERA_CAMERA
-#define onFrame function_t<void,frame_t>
 
+/*────────────────────────────────────────────────────────────────────────────*/
+
+#include <nodepp/expected.h>
 #include <libuvc/libuvc.h>
+#include <nodepp/nodepp.h>
+#include <nodepp/expected.h>
 
 /*────────────────────────────────────────────────────────────────────────────*/
 
@@ -31,62 +35,79 @@ namespace nodepp { enum camera_frame_format {
     FORMAT_COUNT,
 };}
 
+namespace nodepp { struct camera_frame_t {
+    int   height , width, type;
+    uint  count=0; void*  data;
+    ulong size;
+};}
+
+/*────────────────────────────────────────────────────────────────────────────*/
+
 namespace nodepp { class camera_t {
 protected:
 
-    struct frame_t {
-        uint        count=0;
-        int         height;
-        int         width; 
-        int         type;
-        void*       data;
-        ulong       size;
+    enum STATE {
+         CAMERA_STATE_UNKNOWN   = 0b00000000,
+         CAMERA_STATE_USED      = 0b00000001,
+         CAMERA_STATE_CLOSED    = 0b01000000,
+         CAMERA_STATE_RECORDING = 0b10000000
     };
 
     struct NODE {
-        uvc_device_handle_t *devh = nullptr;
-        uvc_context_t       * ctx = nullptr;
-        uvc_device_t        * dev = nullptr;
-        ptr_t<onFrame>      callback;
-        string_t              err ;
-        frame_t               frm ;
-        ulong               stamp = 0;
-        int                 state = 0;
-    };  ptr_t<NODE> obj;
 
-    static void frame_callback( uvc_frame_t *frame, void *user_data ) {
+        uvc_device_handle_t *hdl = nullptr;
+        uvc_context_t       *ctx = nullptr;
+        uvc_device_t        *dev = nullptr;
+        string_t             err ;
+        camera_frame_t       frm ;
+        ulong              stamp = 0;
+        int                state = 0;
 
-        if( user_data==nullptr || frame==nullptr ){ return; }
+       ~NODE ( ) {
+        if( hdl ){ uvc_close       ( hdl ); }
+        if( dev ){ uvc_unref_device( dev ); }
+        if( ctx ){ uvc_exit        ( ctx ); }}
 
-        auto    callback = type::cast<onFrame>( user_data );
-        frame_t raw_frame; memset( &raw_frame, 0, sizeof( frame_t ) );
+    };  ptr_t <NODE> obj;
 
-        raw_frame.type  = frame->frame_format; 
-        raw_frame.size  = frame->data_bytes;
-        raw_frame.height= frame->height;
-        raw_frame.width = frame->width;
-        raw_frame.data  = frame->data;
-        raw_frame.count = 0;
+    static void frame_callback( uvc_frame_t *raw_frame, void *user_data ) {
 
-        ( *callback )( raw_frame );
+        if( user_data==nullptr || raw_frame==nullptr ){ return; }
+
+        auto self = (camera_t *)( user_data );
+        
+        if( self->is_closed() ) /*-*/ { return; }
+        if( raw_frame->data_bytes==0 ){ return; }
+
+        camera_frame_t &frame = self->obj->frm;
+
+        frame.type  = raw_frame->frame_format; 
+        frame.size  = raw_frame->data_bytes;
+        frame.height= raw_frame->height;
+        frame.width = raw_frame->width;
+        frame.data  = raw_frame->data;
+        frame.count = 0;
+
+        self->obj->stamp = process::now(); 
+        self->onData.emit( frame );
 
     }
 
-    bool errno( uvc_error error ) const noexcept { switch( error ) {
-        case UVC_ERROR_IO:             obj->err="Input/output error";      return 1; break;
-        case UVC_ERROR_INVALID_PARAM:  obj->err="Invalid Parameter";       return 1; break;
-        case UVC_ERROR_ACCESS:         obj->err="Access denied";           return 1; break;
-        case UVC_ERROR_NO_DEVICE:      obj->err="No such device";          return 1; break;
-        case UVC_ERROR_NOT_FOUND:      obj->err="Entity not found";        return 1; break;
-        case UVC_ERROR_BUSY:           obj->err="Resource busy";           return 1; break;
-        case UVC_ERROR_TIMEOUT:        obj->err="Operation timed out";     return 1; break;
-        case UVC_ERROR_NO_MEM:         obj->err="Insufficient memory";     return 1; break;
-        case UVC_ERROR_NOT_SUPPORTED:  obj->err="Operation not supported"; return 1; break;
-        case UVC_ERROR_INVALID_DEVICE: obj->err="Device not supported";    return 1; break;
-        case UVC_ERROR_INVALID_MODE:   obj->err="Mode not supported";      return 1; break;
-        case UVC_ERROR_OTHER:          obj->err="something went wrong";    return 1; break;
-        default:                       obj->err.clear();                   return 0; break;
-    }                                  obj->err.clear();                   return 0; }
+    bool error( uvc_error state ) const noexcept { switch( state ) {
+        case UVC_ERROR_IO:             obj->err="Input/output error";      return true ; break;
+        case UVC_ERROR_INVALID_PARAM:  obj->err="Invalid Parameter";       return true ; break;
+        case UVC_ERROR_ACCESS:         obj->err="Access denied";           return true ; break;
+        case UVC_ERROR_NO_DEVICE:      obj->err="No such device";          return true ; break;
+        case UVC_ERROR_NOT_FOUND:      obj->err="Entity not found";        return true ; break;
+        case UVC_ERROR_BUSY:           obj->err="Resource busy";           return true ; break;
+        case UVC_ERROR_TIMEOUT:        obj->err="Operation timed out";     return true ; break;
+        case UVC_ERROR_NO_MEM:         obj->err="Insufficient memory";     return true ; break;
+        case UVC_ERROR_NOT_SUPPORTED:  obj->err="Operation not supported"; return true ; break;
+        case UVC_ERROR_INVALID_DEVICE: obj->err="Device not supported";    return true ; break;
+        case UVC_ERROR_INVALID_MODE:   obj->err="Mode not supported";      return true ; break;
+        case UVC_ERROR_OTHER:          obj->err="something went wrong";    return true ; break;
+        default:                       obj->err.clear();                   return false; break;
+    }}
 
     enum uvc_frame_format get_type( uint type ) const noexcept { switch( type ) {
         case FORMAT_UNCOMPRESSED: return UVC_FRAME_FORMAT_UNCOMPRESSED; break;
@@ -110,44 +131,69 @@ protected:
         case FORMAT_BGR:          return UVC_FRAME_FORMAT_BGR;          break;
         case FORMAT_BY8:          return UVC_FRAME_FORMAT_BY8;          break;
         default:                  return UVC_FRAME_FORMAT_ANY;          break; 
-    }                             return UVC_FRAME_FORMAT_ANY; }
+    }   /*---------------------*/ return UVC_FRAME_FORMAT_ANY; }
+
+    void kill() const noexcept { 
+        if( is_closed () ){ return ; } 
+        uvc_stop_streaming( obj->hdl );
+        obj->state &=~ STATE::CAMERA_STATE_RECORDING;
+    }
 
 public:
 
-    camera_t( uint16 vid, uint16 pid, const char* serial ) : obj( new NODE() ) {
+    event_t<camera_frame_t> onData ;
+    event_t<> /*---------*/ onClose;
+    event_t<> /*---------*/ onDrain;
+    event_t<except_t> /*-*/ onError;
 
-        if( errno( uvc_init( &obj->ctx, nullptr ) ) )
-          { process::error( obj->err ); return; }
+    /*─······································································─*/
 
-        if( errno( uvc_find_device( obj->ctx, &obj->dev, vid, pid, serial ) ) ) 
-          { process::error( obj->err ); return; }
+    expected_t<camera_t,except_t>
+    get_device( uchar_16 vid, uchar_16 pid, const char* serial ) const noexcept {
 
-        if( errno( uvc_open( obj->dev, &obj->devh ) ) )
-          { process::error( obj->err ); return; }
+        if( error( uvc_init( &obj->ctx, nullptr ) ) )
+          { return except_t( obj->err ); }
 
-        obj->state = 1; obj->stamp = process::now();
+        if( error( uvc_find_device( obj->ctx, &obj->dev, vid, pid, serial ) ) ) 
+          { return except_t( obj->err ); }
+
+        if( error( uvc_open( obj->dev, &obj->hdl ) ) )
+          { return except_t( obj->err ); }
+
+        obj->state = STATE::CAMERA_STATE_USED;
+        obj->stamp = process::now()   ;
         
-    }
-
-   ~camera_t() noexcept { if( obj.count()>1 ){ return; } free(); }
-    
-    camera_t() : obj( new NODE() ) {}
+    return *this; }
 
     /*─······································································─*/
     
-    bool is_closed() const noexcept { return !is_available(); }
+    camera_t() : obj( new NODE() ) {}
 
-    bool is_available() const noexcept { 
-        return obj->state>=1 && obj->ctx!=nullptr && 
-               process::now()-obj->stamp<3000; 
-    }
+   ~camera_t() { if( obj.count() > 1 ){ return; } free(); }
+
+    /*─······································································─*/
+
+    bool is_available() const noexcept { return obj->state & STATE::CAMERA_STATE_USED && ( process::now() - obj->stamp ) < 3000 ; }
+
+    bool is_recording() const noexcept { return obj->state & STATE::CAMERA_STATE_RECORDING; }
+
+    bool    is_closed() const noexcept { return !is_available(); }
+
+    /*─······································································─*/
     
-    void close() const noexcept { free(); }
+    void stop_streaming() const noexcept { close(); }
+
+    void close() const noexcept { 
+        if( is_closed   () ){ return; }
+        if( is_recording() ){ kill(); }
+        obj->state = STATE::CAMERA_STATE_CLOSED;
+        onDrain.emit(); free(); 
+    }
 
     /*─······································································─*/
 
     int get_produc_id() const noexcept {
-        uvc_device_descriptor_t *descriptor;
+    uvc_device_descriptor_t *descriptor;
         
         if( uvc_get_device_descriptor( obj->dev, &descriptor ) )
           { return -1; }  
@@ -157,7 +203,7 @@ public:
     };
 
     int get_vendor_id() const noexcept {
-        uvc_device_descriptor_t *descriptor;
+    uvc_device_descriptor_t *descriptor;
         
         if( uvc_get_device_descriptor( obj->dev, &descriptor ) )
           { return -1; }  
@@ -169,7 +215,7 @@ public:
     /*─······································································─*/
 
     string_t get_device_product() const noexcept {
-        uvc_device_descriptor_t *descriptor; char *desc_str = nullptr;
+    uvc_device_descriptor_t *descriptor; char *desc_str = nullptr;
         
         if( uvc_get_device_descriptor( obj->dev, &descriptor ) )
           { return nullptr; }
@@ -179,7 +225,7 @@ public:
     };
 
     string_t get_device_manufacturer() const noexcept {
-        uvc_device_descriptor_t *descriptor; char *desc_str = nullptr;
+    uvc_device_descriptor_t *descriptor; char *desc_str = nullptr;
         
         if( uvc_get_device_descriptor( obj->dev, &descriptor ) )
           { return nullptr; }
@@ -189,7 +235,7 @@ public:
     };
 
     string_t get_device_serial() const noexcept {
-        uvc_device_descriptor_t *descriptor; char *desc_str = nullptr;
+    uvc_device_descriptor_t *descriptor; char *desc_str = nullptr;
         
         if( uvc_get_device_descriptor( obj->dev, &descriptor ) )
           { return nullptr; }
@@ -200,41 +246,53 @@ public:
     
     /*─······································································─*/
 
-    template < class... T >
-    void start_recording( int type, int width, int height, int fps ) const {
+    template < class... T > int
+    start_streaming( int type, int width, int height, int fps ) const noexcept {
 
-        if( obj->state==2 || !is_available() ){ return; } 
-            obj->state =2; auto self = type::bind( this );
+        if( !is_available() )
+          { onError.emit( except_t( "camera has been closed" ) ); return -1; } 
 
-            obj->callback = new onFrame([=]( frame_t frame ){
-                memcpy( &self->obj->frm, &frame, sizeof(frame_t) );
-                self->obj->stamp = process::now();
-            }); uvc_stream_ctrl_t ctrl;
+        if( obj->state & STATE::CAMERA_STATE_RECORDING )
+          { onError.emit( except_t( "camera is been used" ) );    return -1; } 
 
-        if( errno( uvc_get_stream_ctrl_format_size( obj->devh, &ctrl, get_type(type), width, height, fps ) ) ) 
-          { process::error( obj->err ); return; }
+            obj->state|= STATE::CAMERA_STATE_RECORDING;
+            auto self  = type::bind( this );
+            uvc_stream_ctrl_t ctrl;
 
-        if( errno( uvc_start_streaming( obj->devh, &ctrl, frame_callback, &obj->callback, 0 ) ) ) 
-          { process::error( obj->err ); return; }
+        if( error( uvc_get_stream_ctrl_format_size( obj->hdl, &ctrl, get_type(type), width, height, fps ) ) || 
+            error( uvc_start_streaming /*------*/ ( obj->hdl, &ctrl, frame_callback, (void*) &self, 0   ) ) 
+        ) { onError.emit( except_t( obj->err ) ); return -1; }
 
-    }
+        process::add( coroutine::add( COROUTINE(){
+        coBegin
 
-    void stop_recording() const noexcept { if( is_available() ){ 
-         uvc_stop_streaming( obj->devh ); obj->state = 1;
-    }}
+            while ( self->is_available() && self->is_recording() ) {
+            if( self->obj->frm.count > 1 ){ return 1; }
+            if( self->obj->frm.size == 0 ){ return 1; }
+                self->onData.emit( self->obj->frm );
+                self->obj->frm.count++; coNext;
+            }
 
-    frame_t* get_frame() const noexcept { 
-        if( obj->frm.count > 1 ){ return nullptr; }
-            obj->frm.count++; return &obj->frm; 
+        coFinish
+        }));
+
+    return 1; }
+    
+    /*─······································································─*/
+
+    void free() const noexcept {
+
+        if( is_recording() ){ kill(); }
+        if( is_available() ){ onDrain.emit(); obj->state = STATE::CAMERA_STATE_CLOSED; }
+
+        onDrain.clear(); onData.clear();
+        onError.clear(); onClose.emit();
+
     }
     
     /*─······································································─*/
 
-    void free() const noexcept { if( obj->state==0 ){ return; } obj->state=0;
-        if( obj->devh!=nullptr ){ stop_recording(); uvc_close(obj->devh); }
-        if( obj->dev !=nullptr ){ uvc_unref_device(obj->dev); }
-        if( obj->ctx !=nullptr ){ uvc_exit(obj->ctx); }
-    }
+    camera_frame_t get_frame() const noexcept { return obj->frm; }
 
 };}
 
@@ -242,42 +300,36 @@ public:
 
 namespace nodepp { namespace camera {
 
-    template< class... T >
-    camera_t add( const T&... args ) { return camera_t(args...); }
+    inline expected_t<ptr_t<camera_t>,except_t> 
+    scan () {
+         uvc_context_t *ctx ; queue_t<camera_t> que;
+    do { uvc_device_t **devs;
 
-    ptr_t<camera_t> scan() {
-          uvc_context_t * ctx;
-    try { uvc_device_t **devs; uint8 count = 0;
+        if( uvc_init(&ctx, NULL)!=0 ) /*-------*/ { break; }
+        if( uvc_get_device_list( ctx, &devs )!=0 ){ break; }
+        if( devs[0] == nullptr ) /*------------*/ { break; }
 
-        if( uvc_init(&ctx, NULL)!=0 ){ throw ""; }
+        ulong x=0; while( devs[x]!=nullptr ){ uvc_device_descriptor_t *desc;
 
-        if( uvc_get_device_list( ctx, &devs )!=0 )
-          { throw ""; }
+            if( uvc_get_device_descriptor( devs[x], &desc )!=0 ){ continue; }
 
-        while( devs[count]!=nullptr ){ count++; }
-            
-        ptr_t<camera_t> pointer ( count );
-
-        for( int i=0; i<count; i++ ) {
-             uvc_device_descriptor_t *desc;
-
-            if( uvc_get_device_descriptor( devs[i], &desc )!=0 ) 
-              { continue; } 
-              
-            pointer[count] = camera_t(
-                desc->idVendor, desc->idProduct,
-                desc->serialNumber
+            auto cam = camera_t().get_device( 
+                desc->idVendor , /*--------------*/
+                desc->idProduct, desc->serialNumber
             );
 
-            uvc_free_device_descriptor( desc );
-        }   uvc_free_device_list( devs, count );
+            if( cam.has_value() ){ que.push( cam.value() ); }
 
-                   uvc_exit(ctx); return pointer;
-    } catch(...) { uvc_exit(ctx); return nullptr; } }
+        /*---*/ uvc_free_device_descriptor( desc );
+        x++ ; } uvc_free_device_list   ( devs, x );
+
+        if( que.empty() ){ break; }
+
+        /*---*/ uvc_exit(ctx); return que.data();
+    } while(0); uvc_exit(ctx); return except_t( "no cameras founded" ); }
 
 }}
 
 /*────────────────────────────────────────────────────────────────────────────*/
 
-#undef onFrame
 #endif

@@ -1,40 +1,43 @@
-# NODEPP-CAMERA
-Read USB Camera's Data in Nodepp
+# Nodepp Camera Wrapper
 
-## Dependencies
+This repository contains the camera.h wrapper class for accessing USB Video Class (UVC) compliant cameras within the Nodepp Project environment. It utilizes the libuvc library to provide a clean, asynchronous C++ interface for discovery, control, and frame streaming.
+
+## Dependencies & CMake Integration
 ```bash
 #libuvc-dev
 🪟: pacman -S mingw-w64-x86_64-libuvc
 🐧: sudo apt install libuvc-dev
 ```
-
-## Example
-```cpp
-#include <nodepp/nodepp.h>
-#include <camera/camera.h>
-
-using namespace nodepp;
-
-void onMain() {
-
-    auto devices = camera::scan();
-
-    devices[0].start_recording( UVC_FRAME_FORMAT_YUYV, 640, 480, 30 );
-
-    process::add([=](){
-    coStart
-    
-        while( devices[0].is_available() ){
-            console::log( devices[0].get_frame()->data );
-        coDelay( 100 ); } devices[0].close();
-    
-    coStop
-    });
-
-}
-```
-
-## Compilation
 ```bash
-g++ -o main main.cpp -I./include -luvc -lpthread -lusb-1.0
+include(FetchContent)
+
+FetchContent_Declare(
+	nodepp
+	GIT_REPOSITORY   https://github.com/NodeppOfficial/nodepp
+	GIT_TAG          origin/main
+	GIT_PROGRESS     ON
+)
+FetchContent_MakeAvailable(nodepp)
+
+FetchContent_Declare(
+	nodepp-camera
+	GIT_REPOSITORY   https://github.com/NodeppOfficial/nodepp-camera
+	GIT_TAG          origin/main
+	GIT_PROGRESS     ON
+)
+FetchContent_MakeAvailable(nodepp-camera)
+
+#[...]
+
+target_link_libraries( #[...]
+	PUBLIC nodepp nodepp-camera #[...]
+)
 ```
+
+## Build & Run
+```bash
+g++ -o main main.cpp -I./include -luvc -lpthread -lusb-1.0; ./main
+```
+
+## License
+**Nodepp-Camera** is distributed under the MIT License. See the LICENSE file for more details.
